@@ -1518,13 +1518,13 @@ go_repository(
 
 go_repository(
     name = "com_github_wealdtech_go_eth2_wallet_store_filesystem",
-    commit = "1eea6a48d75380047d2ebe7c8c4bd8985bcfdeca",
+    commit = "72fb8906f8aeeee98e536c285653fa4f1a5a7bd7",
     importpath = "github.com/wealdtech/go-eth2-wallet-store-filesystem",
 )
 
 go_repository(
     name = "com_github_wealdtech_go_eth2_wallet_store_s3",
-    commit = "1c821b5161f7bb0b3efa2030eff687eea5e70e53",
+    commit = "c8504cb6518db591571e9446e21ec9fc2db0da4b",
     importpath = "github.com/wealdtech/go-eth2-wallet-store-s3",
 )
 
@@ -1548,7 +1548,7 @@ go_repository(
 
 go_repository(
     name = "com_github_wealdtech_go_eth2_util",
-    commit = "326ebb1755651131bb8f4506ea9a23be6d9ad1dd",
+    commit = "4f789f9e56b194817b1de1008076840849cf5603",
     importpath = "github.com/wealdtech/go-eth2-util",
 )
 
