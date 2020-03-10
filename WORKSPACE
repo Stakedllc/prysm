@@ -1500,20 +1500,20 @@ go_repository(
 
 go_repository(
     name = "com_github_wealdtech_go_eth2_wallet",
-    commit = "6970d62e60d86fdae3c3e510e800e8a60d755a7d",
+    commit = "b631c8424c0827155adb8286ce6624f4c4a7968b",
     importpath = "github.com/wealdtech/go-eth2-wallet",
 )
 
 go_repository(
-    name = "com_github_wealdtech_go_eth2_wallet_hd",
-    commit = "ce0a252a01c621687e9786a64899cfbfe802ba73",
-    importpath = "github.com/wealdtech/go-eth2-wallet-hd",
+    name = "com_github_wealdtech_go_eth2_wallet_hd_v2",
+    commit = "c9f618887c1395c625a59b0c45bfb7af9c137c7b",
+    importpath = "github.com/wealdtech/go-eth2-wallet-hd/v2",
 )
 
 go_repository(
-    name = "com_github_wealdtech_go_eth2_wallet_nd",
-    commit = "12c8c41cdbd16797ff292e27f58e126bb89e9706",
-    importpath = "github.com/wealdtech/go-eth2-wallet-nd",
+    name = "com_github_wealdtech_go_eth2_wallet_nd_v2",
+    commit = "8febbe2fb63c484a37e154232e1521d2a9b20523",
+    importpath = "github.com/wealdtech/go-eth2-wallet-nd/v2",
 )
 
 go_repository(
@@ -1535,15 +1535,15 @@ go_repository(
 )
 
 go_repository(
-    name = "com_github_wealdtech_go_eth2_wallet_types",
-    commit = "af67d8101be61e7c4dd8126d2b3eba20cff5dab2",
-    importpath = "github.com/wealdtech/go-eth2-wallet-types",
+    name = "com_github_wealdtech_go_eth2_wallet_types_v2",
+    commit = "43457900c44194447a4373cac228fcd7c9ed02c0",
+    importpath = "github.com/wealdtech/go-eth2-wallet-types/v2",
 )
 
 go_repository(
-    name = "com_github_wealdtech_go_eth2_types",
-    commit = "f9c31ddf180537dd5712d5998a3d56c45864d71f",
-    importpath = "github.com/wealdtech/go-eth2-types",
+    name = "com_github_wealdtech_go_eth2_types_v2",
+    commit = "b10b11161040ac0a1749d998df7c130db86af472",
+    importpath = "github.com/wealdtech/go-eth2-types/v2",
 )
 
 go_repository(
