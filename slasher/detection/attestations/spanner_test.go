@@ -3,15 +3,14 @@ package attestations
 import (
 	"context"
 	"reflect"
-	"strings"
 	"testing"
 
 	ethpb "github.com/prysmaticlabs/ethereumapis/eth/v1alpha1"
-	"github.com/prysmaticlabs/prysm/shared/sliceutil"
+	testDB "github.com/prysmaticlabs/prysm/slasher/db/testing"
 	"github.com/prysmaticlabs/prysm/slasher/detection/attestations/types"
 )
 
-func TestSpanDetector_DetectSlashingForValidator_Double(t *testing.T) {
+func TestSpanDetector_DetectSlashingsForAttestation_Double(t *testing.T) {
 	type testStruct struct {
 		name        string
 		att         *ethpb.IndexedAttestation
@@ -146,7 +145,7 @@ func TestSpanDetector_DetectSlashingForValidator_Double(t *testing.T) {
 					BeaconBlockRoot: []byte("bad block root"),
 				},
 			},
-			slashCount: 3,
+			slashCount: 1,
 		},
 		{
 			name: "att with different target, should not detect possible double",
@@ -212,49 +211,49 @@ func TestSpanDetector_DetectSlashingForValidator_Double(t *testing.T) {
 					BeaconBlockRoot: []byte("good block root"),
 				},
 			},
-			slashCount: 2,
+			slashCount: 1,
 		},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			numEpochsToTrack := 100
+			db := testDB.SetupSlasherDB(t, false)
+			defer testDB.TeardownSlasherDB(t, db)
+			ctx := context.Background()
+
 			sd := &SpanDetector{
-				spans: make([]map[uint64]types.Span, numEpochsToTrack),
+				slasherDB: db,
 			}
 
-			ctx := context.Background()
 			if err := sd.UpdateSpans(ctx, tt.att); err != nil {
 				t.Fatal(err)
 			}
 
-			slashTotal := uint64(0)
-			for _, valIdx := range sliceutil.IntersectionUint64(tt.att.AttestingIndices, tt.incomingAtt.AttestingIndices) {
-				res, err := sd.DetectSlashingForValidator(ctx, valIdx, tt.incomingAtt.Data)
-				if err != nil {
-					t.Fatal(err)
-				}
-				var want *types.DetectionResult
-				if tt.slashCount > 0 {
-					slashTotal++
-					want = &types.DetectionResult{
+			res, err := sd.DetectSlashingsForAttestation(ctx, tt.incomingAtt)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			var want []*types.DetectionResult
+			if tt.slashCount > 0 {
+				want = []*types.DetectionResult{
+					{
 						Kind:           types.DoubleVote,
 						SlashableEpoch: tt.incomingAtt.Data.Target.Epoch,
 						SigBytes:       [2]byte{1, 2},
-					}
-				}
-				if !reflect.DeepEqual(res, want) {
-					t.Errorf("Wanted: %v, received %v", want, res)
+					},
 				}
 			}
-			if slashTotal != tt.slashCount {
-				t.Fatalf("Unexpected amount of slashings found, received %d, expected %d", slashTotal, tt.slashCount)
+			if !reflect.DeepEqual(res, want) {
+				t.Errorf("Wanted: %v, received %v", want, res)
+			}
+			if uint64(len(res)) != tt.slashCount {
+				t.Fatalf("Unexpected amount of slashings found, received %db, expected %d", len(res), tt.slashCount)
 			}
 		})
 	}
 }
 
-func TestSpanDetector_DetectSlashingForValidator_Surround(t *testing.T) {
+func TestSpanDetector_DetectSlashingsForAttestation_Surround(t *testing.T) {
 	type testStruct struct {
 		name                     string
 		sourceEpoch              uint64
@@ -446,30 +445,39 @@ func TestSpanDetector_DetectSlashingForValidator_Surround(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			numEpochsToTrack := 100
+			db := testDB.SetupSlasherDB(t, false)
+			ctx := context.Background()
+			defer testDB.TeardownSlasherDB(t, db)
+
 			sd := &SpanDetector{
-				spans: make([]map[uint64]types.Span, numEpochsToTrack),
+				slasherDB: db,
 			}
 			// We only care about validator index 0 for these tests for simplicity.
 			validatorIndex := uint64(0)
 			for k, v := range tt.spansByEpochForValidator {
-				sd.spans[k] = map[uint64]types.Span{
-					validatorIndex: types.Span{
+				span := map[uint64]types.Span{
+					validatorIndex: {
 						MinSpan: v[0],
 						MaxSpan: v[1],
 					},
 				}
+				if err := sd.slasherDB.SaveEpochSpansMap(ctx, k, span); err != nil {
+					t.Fatalf("Failed to save to slasherDB: %v", err)
+				}
 			}
-			ctx := context.Background()
-			attData := &ethpb.AttestationData{
-				Source: &ethpb.Checkpoint{
-					Epoch: tt.sourceEpoch,
+
+			att := &ethpb.IndexedAttestation{
+				Data: &ethpb.AttestationData{
+					Source: &ethpb.Checkpoint{
+						Epoch: tt.sourceEpoch,
+					},
+					Target: &ethpb.Checkpoint{
+						Epoch: tt.targetEpoch,
+					},
 				},
-				Target: &ethpb.Checkpoint{
-					Epoch: tt.targetEpoch,
-				},
+				AttestingIndices: []uint64{0},
 			}
-			res, err := sd.DetectSlashingForValidator(ctx, validatorIndex, attData)
+			res, err := sd.DetectSlashingsForAttestation(ctx, att)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -477,9 +485,11 @@ func TestSpanDetector_DetectSlashingForValidator_Surround(t *testing.T) {
 				t.Fatalf("Did not want validator to be slashed but found slashable offense: %v", res)
 			}
 			if tt.shouldSlash {
-				want := &types.DetectionResult{
-					Kind:           types.SurroundVote,
-					SlashableEpoch: tt.slashableEpoch,
+				want := []*types.DetectionResult{
+					{
+						Kind:           types.SurroundVote,
+						SlashableEpoch: tt.slashableEpoch,
+					},
 				}
 				if !reflect.DeepEqual(res, want) {
 					t.Errorf("Wanted: %v, received %v", want, res)
@@ -489,7 +499,7 @@ func TestSpanDetector_DetectSlashingForValidator_Surround(t *testing.T) {
 	}
 }
 
-func TestSpanDetector_DetectSlashingForValidator_MultipleValidators(t *testing.T) {
+func TestSpanDetector_DetectSlashingsForAttestation_MultipleValidators(t *testing.T) {
 	type testStruct struct {
 		name            string
 		sourceEpochs    []uint64
@@ -558,24 +568,34 @@ func TestSpanDetector_DetectSlashingForValidator_MultipleValidators(t *testing.T
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			numEpochsToTrack := 100
+			db := testDB.SetupSlasherDB(t, false)
+			ctx := context.Background()
+			defer db.ClearDB()
+			defer db.Close()
+
 			sd := &SpanDetector{
-				spans: make([]map[uint64]types.Span, numEpochsToTrack),
+				slasherDB: db,
 			}
 			for i := 0; i < len(tt.spansByEpoch); i++ {
-				sd.spans[i] = tt.spansByEpoch[i]
-			}
-			ctx := context.Background()
-			for valIdx := uint64(0); valIdx < uint64(len(tt.shouldSlash)); valIdx++ {
-				attData := &ethpb.AttestationData{
-					Source: &ethpb.Checkpoint{
-						Epoch: tt.sourceEpochs[valIdx],
-					},
-					Target: &ethpb.Checkpoint{
-						Epoch: tt.targetEpochs[valIdx],
-					},
+				epoch := uint64(i)
+				err := sd.slasherDB.SaveEpochSpansMap(ctx, epoch, tt.spansByEpoch[epoch])
+				if err != nil {
+					t.Fatalf("Failed to save to slasherDB: %v", err)
 				}
-				res, err := sd.DetectSlashingForValidator(ctx, valIdx, attData)
+			}
+			for valIdx := uint64(0); valIdx < uint64(len(tt.shouldSlash)); valIdx++ {
+				att := &ethpb.IndexedAttestation{
+					Data: &ethpb.AttestationData{
+						Source: &ethpb.Checkpoint{
+							Epoch: tt.sourceEpochs[valIdx],
+						},
+						Target: &ethpb.Checkpoint{
+							Epoch: tt.targetEpochs[valIdx],
+						},
+					},
+					AttestingIndices: []uint64{valIdx},
+				}
+				res, err := sd.DetectSlashingsForAttestation(ctx, att)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -583,9 +603,11 @@ func TestSpanDetector_DetectSlashingForValidator_MultipleValidators(t *testing.T
 					t.Fatalf("Did not want validator to be slashed but found slashable offense: %v", res)
 				}
 				if tt.shouldSlash[valIdx] {
-					want := &types.DetectionResult{
-						Kind:           types.SurroundVote,
-						SlashableEpoch: tt.slashableEpochs[valIdx],
+					want := []*types.DetectionResult{
+						{
+							Kind:           types.SurroundVote,
+							SlashableEpoch: tt.slashableEpochs[valIdx],
+						},
 					}
 					if !reflect.DeepEqual(res, want) {
 						t.Errorf("Wanted: %v, received %v", want, res)
@@ -593,93 +615,6 @@ func TestSpanDetector_DetectSlashingForValidator_MultipleValidators(t *testing.T
 				}
 			}
 		})
-	}
-}
-
-func TestSpanDetector_SpanForEpochByValidator(t *testing.T) {
-	numEpochsToTrack := 2
-	sd := &SpanDetector{
-		spans: make([]map[uint64]types.Span, numEpochsToTrack),
-	}
-	epoch := uint64(1)
-	validatorIndex := uint64(40)
-	sd.spans[epoch] = map[uint64]types.Span{
-		validatorIndex: {MinSpan: 3, MaxSpan: 7},
-	}
-	want := types.Span{
-		MinSpan:     3,
-		MaxSpan:     7,
-		SigBytes:    [2]byte{0, 0},
-		HasAttested: false,
-	}
-	ctx := context.Background()
-	res, err := sd.SpanForEpochByValidator(ctx, validatorIndex, epoch)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(want, res) {
-		t.Errorf("Wanted %v, received %v", want, res)
-	}
-	validatorIndex = uint64(0)
-	if _, err = sd.SpanForEpochByValidator(
-		ctx,
-		validatorIndex,
-		epoch,
-	); err != nil && !strings.Contains(err.Error(), "validator index 0 not found") {
-		t.Errorf("Wanted validator index not found error, received %v", err)
-	}
-	validatorIndex = uint64(40)
-	epoch = uint64(3)
-	if _, err = sd.SpanForEpochByValidator(
-		ctx,
-		validatorIndex,
-		epoch,
-	); err != nil && !strings.Contains(err.Error(), "no data found for epoch") {
-		t.Errorf("Wanted no data found for epoch error, received %v", err)
-	}
-}
-
-func TestSpanDetector_ValidatorSpansByEpoch(t *testing.T) {
-	numEpochsToTrack := 2
-	sd := &SpanDetector{
-		spans: make([]map[uint64]types.Span, numEpochsToTrack),
-	}
-	epoch := uint64(1)
-	validatorIndex := uint64(40)
-	want := map[uint64]types.Span{
-		validatorIndex: {MinSpan: 3, MaxSpan: 7},
-	}
-	sd.spans[epoch] = want
-	res := sd.ValidatorSpansByEpoch(context.Background(), epoch)
-	if !reflect.DeepEqual(res, want) {
-		t.Errorf("Wanted %v, received %v", want, res)
-	}
-}
-
-func TestSpanDetector_DeleteValidatorSpansByEpoch(t *testing.T) {
-	numEpochsToTrack := 2
-	sd := &SpanDetector{
-		spans: make([]map[uint64]types.Span, numEpochsToTrack),
-	}
-	epoch := uint64(1)
-	validatorIndex := uint64(40)
-	sd.spans[epoch] = map[uint64]types.Span{
-		validatorIndex: {MinSpan: 3, MaxSpan: 7},
-	}
-	ctx := context.Background()
-	if err := sd.DeleteValidatorSpansByEpoch(
-		ctx,
-		validatorIndex,
-		0, /* epoch */
-	); err != nil && !strings.Contains(err.Error(), "no span map found at epoch 0") {
-		t.Errorf("Wanted error when deleting epoch 0, received: %v", err)
-	}
-	if err := sd.DeleteValidatorSpansByEpoch(ctx, validatorIndex, epoch); err != nil {
-		t.Fatal(err)
-	}
-	want := make(map[uint64]types.Span)
-	if res := sd.ValidatorSpansByEpoch(ctx, epoch); !reflect.DeepEqual(res, want) {
-		t.Errorf("Wanted %v for epoch after deleting, received %v", want, res)
 	}
 }
 
@@ -719,7 +654,7 @@ func TestNewSpanDetector_UpdateSpans(t *testing.T) {
 					2: {MinSpan: 3, MaxSpan: 0, SigBytes: [2]byte{0, 0}, HasAttested: false},
 				},
 				// Epoch 2.
-				nil,
+				{},
 				// Epoch 3.
 				{
 					0: {MinSpan: 0, MaxSpan: 1, SigBytes: [2]byte{0, 0}, HasAttested: false},
@@ -732,9 +667,9 @@ func TestNewSpanDetector_UpdateSpans(t *testing.T) {
 					1: {MinSpan: 0, MaxSpan: 0, SigBytes: [2]byte{1, 2}, HasAttested: true},
 					2: {MinSpan: 0, MaxSpan: 0, SigBytes: [2]byte{1, 2}, HasAttested: true},
 				},
-				nil,
-				nil,
-				nil,
+				{},
+				{},
+				{},
 			},
 		},
 		{
@@ -754,7 +689,7 @@ func TestNewSpanDetector_UpdateSpans(t *testing.T) {
 			},
 			want: []map[uint64]types.Span{
 				// Epoch 0.
-				nil,
+				{},
 				// Epoch 1.
 				{
 					0: {MinSpan: 0, MaxSpan: 4, SigBytes: [2]byte{0, 0}, HasAttested: false},
@@ -785,22 +720,32 @@ func TestNewSpanDetector_UpdateSpans(t *testing.T) {
 					1: {MinSpan: 0, MaxSpan: 0, SigBytes: [2]byte{1, 2}, HasAttested: true},
 					2: {MinSpan: 0, MaxSpan: 0, SigBytes: [2]byte{1, 2}, HasAttested: true},
 				},
-				nil,
-				nil,
+				{},
+				{},
 			},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			sd := &SpanDetector{
-				spans: make([]map[uint64]types.Span, 8),
-			}
+			db := testDB.SetupSlasherDB(t, false)
 			ctx := context.Background()
+			defer db.ClearDB()
+			defer db.Close()
+
+			sd := &SpanDetector{
+				slasherDB: db,
+			}
 			if err := sd.UpdateSpans(ctx, tt.att); err != nil {
 				t.Fatal(err)
 			}
-			if !reflect.DeepEqual(sd.spans, tt.want) {
-				t.Errorf("Wanted and received:\n%v \n%v", tt.want, sd.spans)
+			for epoch := range tt.want {
+				sm, err := sd.slasherDB.EpochSpansMap(ctx, uint64(epoch))
+				if err != nil {
+					t.Fatalf("Failed to read from slasherDB: %v", err)
+				}
+				if !reflect.DeepEqual(sm, tt.want[epoch]) {
+					t.Errorf("Wanted and received:\n%v \n%v", tt.want, sm)
+				}
 			}
 		})
 	}
